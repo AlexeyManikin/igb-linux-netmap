@@ -320,6 +320,10 @@ static int debug = NETIF_MSG_DRV | NETIF_MSG_PROBE;
 module_param(debug, int, 0);
 MODULE_PARM_DESC(debug, "Debug level (0=none, ..., 16=all)");
 
+#if defined(CONFIG_NETMAP) || defined(CONFIG_NETMAP_MODULE)
+#include <if_igb_netmap.h>
+#endif
+
 /**
  * igb_init_module - Driver Registration Routine
  *
@@ -2953,6 +2957,10 @@ static int igb_probe(struct pci_dev *pdev,
 	/* carrier off reporting is important to ethtool even BEFORE open */
 	netif_carrier_off(netdev);
 
+#ifdef DEV_NETMAP
+   igb_netmap_attach(adapter);
+#endif /* DEV_NETMAP */
+
 #ifdef IGB_DCA
 	if (dca_add_requester(&pdev->dev) == E1000_SUCCESS) {
 		adapter->flags |= IGB_FLAG_DCA_ENABLED;
@@ -3142,6 +3150,10 @@ static void igb_remove(struct pci_dev *pdev)
 		E1000_WRITE_REG(hw, E1000_DCA_CTRL, E1000_DCA_CTRL_DCA_DISABLE);
 	}
 #endif
+
+#ifdef DEV_NETMAP
+   netmap_detach(netdev);
+#endif /* DEV_NETMAP */
 
 	/* Release control of h/w to f/w.  If f/w is AMT enabled, this
 	 * would have already happened in close and is redundant. */
@@ -3556,6 +3568,10 @@ void igb_configure_tx_ring(struct igb_adapter *adapter,
 
 	txdctl |= E1000_TXDCTL_QUEUE_ENABLE;
 	E1000_WRITE_REG(hw, E1000_TXDCTL(reg_idx), txdctl);
+
+#ifdef DEV_NETMAP
+   igb_netmap_configure_tx_ring(adapter, reg_idx);
+#endif /* DEV_NETMAP */
 }
 
 /**
@@ -7073,6 +7089,11 @@ static bool igb_clean_tx_irq(struct igb_q_vector *q_vector)
 	if (test_bit(__IGB_DOWN, &adapter->state))
 		return true;
 
+#ifdef DEV_NETMAP
+        if (netmap_tx_irq(tx_ring->netdev, tx_ring->queue_index))
+                return 1; /* cleaned ok */
+#endif /* DEV_NETMAP */
+
 	tx_buffer = &tx_ring->tx_buffer_info[i];
 	tx_desc = IGB_TX_DESC(tx_ring, i);
 	i -= tx_ring->count;
@@ -8086,6 +8107,12 @@ static bool igb_clean_rx_irq(struct igb_q_vector *q_vector, int budget)
 	unsigned int total_bytes = 0, total_packets = 0;
 	u16 cleaned_count = igb_desc_unused(rx_ring);
 
+// TODO: we have two versions of this function!
+#ifdef DEV_NETMAP
+   if (netmap_rx_irq(rx_ring->netdev, rx_ring->queue_index, &total_packets))
+       return true;
+#endif /* DEV_NETMAP */
+
 	do {
 		struct igb_rx_buffer *rx_buffer;
 		union e1000_adv_rx_desc *rx_desc;
@@ -8402,6 +8429,11 @@ void igb_alloc_rx_buffers(struct igb_ring *rx_ring, u16 cleaned_count)
 	union e1000_adv_rx_desc *rx_desc;
 	struct igb_rx_buffer *bi;
 	u16 i = rx_ring->next_to_use;
+
+#ifdef DEV_NETMAP
+   if (igb_netmap_configure_rx_ring(rx_ring))
+       return;
+#endif /* DEV_NETMAP */
 
 	/* nothing to do */
 	if (!cleaned_count)
